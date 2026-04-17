@@ -1,4 +1,4 @@
-import requests
+from openai import OpenAI
 import gradio as gr
 from dotenv import load_dotenv
 import os
@@ -6,43 +6,36 @@ import os
 load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
-ENDPOINT = os.getenv("GPT_ENDPOINT")
-IMAGE_ENDPOINT = os.getenv("IMAGE_ENDPOINT")
+BASE_URL = os.getenv("GPT_ENDPOINT")
+DEPLOYMENT_NAME = os.getenv("GPT_DEPLOYMENT")
 
-headers = {
-    "Content-Type": "application/json",
-    "api-key": API_KEY,
-}
+if not API_KEY or not BASE_URL or not DEPLOYMENT_NAME:
+    raise ValueError(
+        "Missing required .env values. Make sure API_KEY, GPT_ENDPOINT, and GPT_DEPLOYMENT are set."
+    )
+
+client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+
 
 def chat_with_gpt(prompt):
-    payload = {
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.7,
-        "top_p": 0.95,
-        "max_tokens": 800,
-    }
     try:
-        response = requests.post(ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"][
-            "content"
-        ]
-    except requests.RequestException as e:
-        return f"Error: {str(e)}"
-
-
-# Send a request to Azure DALL-E endpoint to generate an image
-def generate_image(prompt):
-    payload = {"prompt": prompt, "n": 1, "size": "1024x1024", "model": "dall-e-3"}
-    try:
-        response = requests.post(IMAGE_ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
-        image_url = response.json()["data"][0]["url"]  # Extract the image URL
-        return image_url
-    except requests.RequestException as e:
+        response = client.chat.completions.create(
+            model=DEPLOYMENT_NAME,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            top_p=0.95,
+            max_completion_tokens=800,
+        )
+        message = response.choices[0].message
+        if hasattr(message, "content"):
+            return message.content
+        if isinstance(message, dict):
+            return message.get("content", "")
+        return str(message)
+    except Exception as e:
         return f"Error: {str(e)}"
 
 
@@ -50,12 +43,6 @@ def generate_image(prompt):
 def generate_response(prompt):
     text_response = chat_with_gpt(prompt)
     return text_response
-
-
-# Gradio Interface for DALL-E
-def generate_dalle_image(prompt):
-    image_url = generate_image(prompt)
-    return image_url
 
 
 # Gradio interface setup
@@ -151,9 +138,9 @@ with gr.Blocks(
 }
 """
 ) as demo:
-    gr.Markdown("# Azure GPT-4 and DALL-E 3")
+    gr.Markdown("# Azure GPT-4 Text Generator")
     gr.Markdown(
-        "Enter a prompt to interact with either GPT-4 for text responses or DALL-E for image generation."
+        "Enter a prompt to interact with Azure GPT-4 and receive a text response."
     )
 
     # Section for GPT-4 Text Generation
@@ -169,23 +156,10 @@ with gr.Blocks(
             generate_response, inputs=prompt_gpt, outputs=output_message
         )
 
-    # Section for DALL-E Image Generation
-    with gr.Tab("DALL-E Image Generation"):
-        with gr.Row():
-            prompt_dalle = gr.Textbox(
-                label="Enter your image prompt",
-                placeholder="e.g., A futuristic city skyline at sunset.",
-                lines=2,
-            )
-            generate_button_dalle = gr.Button("Generate Image")
-        with gr.Row():
-            output_image = gr.Image(
-                label="Generated Image", type="filepath", elem_id="image-output"
-            )
-        generate_button_dalle.click(
-            generate_dalle_image, inputs=prompt_dalle, outputs=output_image
-        )
-
 # Launch the interface
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.environ.get("PORT", 8000)),
+        share=False,
+    )
